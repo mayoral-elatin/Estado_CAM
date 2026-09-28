@@ -57,7 +57,15 @@ button,input,textarea{font:inherit;color:inherit}
 .sys .dot.on{background:var(--ok)}
 .load{margin-top:10px;display:flex;flex-wrap:wrap;gap:8px}
 .load label.btn{flex:1 1 100%}
-.load .btn.ghost{flex:1 1 40%}
+.load .btn.ghost{flex:1 1 20%;padding:12px 4px}
+.shbanner{display:flex;justify-content:space-between;align-items:center;gap:10px;width:100%;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:8px 10px;font-size:14.5px}
+.menu > .btn{display:block;width:100%;margin:8px 0;text-align:left}
+.menu .sheetbtns .btn{flex:1 1 0}
+.cs:disabled::after{content:''}
+.menu select,.menu input{width:100%;border:1px solid var(--line);border-radius:10px;padding:10px;background:var(--bg);margin:4px 0 8px}
+.menu h4{margin:18px 0 4px;font-family:var(--display);font-size:20px}
+.menu .hint2{font-size:13px;color:var(--ink-2);margin:2px 0 8px}
+.imgprev{width:100%;height:auto;border-radius:10px;border:1px solid var(--line);display:block;margin:10px 0}
 .btn{border:0;border-radius:var(--r-md);padding:12px 16px;font-weight:600;cursor:pointer;background:var(--brand);color:var(--on-brand);flex:1;text-align:center}
 .btn:active{background:var(--brand-2)}
 .btn.ghost{background:var(--surface);color:var(--ink);border:1px solid var(--line);flex:0 0 auto;padding:12px 12px}
@@ -187,7 +195,9 @@ textarea{width:100%;min-height:80px;border:1px solid var(--line);border-radius:v
       <label class="btn" for="file">Cargar archivo</label>
       <input type="file" id="file" accept=".csv,.xlsx,text/csv,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
       <button class="btn ghost" id="share" type="button">Compartir</button>
-      <button class="btn ghost" id="xls" type="button">Descargar Excel</button>
+      <button class="btn ghost" id="xls" type="button">Excel</button>
+      <button class="btn ghost" id="img" type="button">Imagen</button>
+      <button class="btn ghost" id="pdf" type="button">PDF</button>
     </div>
   </div>
   <main id="main"></main>
@@ -460,11 +470,11 @@ function diagEstadoNodo(nd, st){
 }
 /* Sección de la app */
 function htmlRed(R, rep){
-  const topo = TOPO[current]; if (!topo) return '';
+  const topo = getTopo(); if (!topo) return '';
   const SW = estadoSwitches(topo, rep); const st = estadoParadas(R, topo), D = diagnosticar(topo, st, SW), C = COL.pant();
-  const campo = topo.nodos.filter(n => n.tipo !== 'CORE'); const unico = campo.length === 1;
+  const campo = topo.nodos.filter(n => n.tipo !== 'CORE' || paradasNodo(n).length); const unico = campo.length === 1;
   if (unico) nodoSel = campo[0].id;
-  let h = `<section id="red"><h2>Red de fibra óptica <span class="meta">${topo.estrella ? (unico ? 'SW = switch, SV = servidor' : 'conectado ' + (topo.core.al||'al centro') + ' · toca un nodo para ver sus puntos · SW = switch, SV = servidor') : 'toca un nodo para ver su recorrido · línea punteada = radioenlace'}</span></h2>
+  let h = `<section id="red"><h2>Red de fibra óptica <span class="meta">${unico && !topo.estrella ? 'recorrido del nodo · línea punteada = radioenlace' : topo.estrella ? (unico ? 'SW = switch, SV = servidor' : 'conectado ' + (topo.core.al||'al centro') + ' · toca un nodo para ver sus puntos · SW = switch, SV = servidor') : 'toca un nodo para ver su recorrido · línea punteada = radioenlace'}</span></h2>
     ${unico ? '' : `<div class="redcard">${svgGeneral(topo, D, C)}</div>`}`;
   const nd = nodoSel ? topo.nodos.find(n => n.id === nodoSel) : null;
   if (nd){
@@ -507,7 +517,7 @@ function tablaSwitches(topo, D, SW){
   return h + `</tbody></table></div>`;
 }
 function eventosRed(R){
-  const topo = TOPO[current]; if (!topo) return;
+  const topo = getTopo(); if (!topo) return;
   document.querySelectorAll('#red [data-nodo]').forEach(g => g.addEventListener('click', () => { nodoSel = g.dataset.nodo; render(); document.querySelector('.redsvg')?.scrollIntoView({block:'center'}); }));
   const c = document.getElementById('cerrarNodo'); if (c) c.onclick = () => { nodoSel = null; render(); document.getElementById('red').scrollIntoView({block:'start'}); };
   document.querySelectorAll('#red [data-stop]').forEach(g => g.addEventListener('click', () => {
@@ -518,7 +528,7 @@ function eventosRed(R){
 }
 /* Nodo de cada punto (para listas y Excel) */
 function nodoDePunto(p){
-  const topo = TOPO[current]; if (!topo) return '';
+  const topo = getTopo(); if (!topo) return '';
   for (const nd of topo.nodos){
     const ps = paradasNodo(nd);
     if (ps.includes(p)) return nd.nombre;
@@ -526,6 +536,277 @@ function nodoDePunto(p){
   return '';
 }
 /* SVG -> PNG (para Excel) */
+/* ---------- Resumen en imagen (para WhatsApp) ---------- */
+/* ---------- Reporte en PDF (general + detalle por nodo) ---------- */
+async function obtenerJsPDF(){
+  if (window.jspdf && window.jspdf.jsPDF) return window.jspdf.jsPDF;
+  try { await cargarScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js'); } catch(e){ return null; }
+  return (window.jspdf && window.jspdf.jsPDF) || null;
+}
+function componerPaginasPDF(R, rep){
+  const cat = CATS[current], nt = notas(), topo = getTopo();
+  const PW = 1240, PH = 1754, M = 70, CW = PW - 2*M, TOP = 150, BOT = PH - 80;
+  const X = {nav:'#203868', az:'#0860A8', cy:'#00A8E8', ok:'#23845A', okb:'#DDF1E6', wa:'#B7790F', wab:'#FBEFD2', ba:'#C23B2E', bab:'#F9DEDA', gr:'#8C9AA8', grb:'#E7E6E6', tx:'#1B2B48', t2:'#4A5D70', li:'#D3DCE4', fo:'#EDF2F8'};
+  const T = (x,y,t,sz,col,peso='400',anc='start') => `<text x="${x}" y="${y}" font-family="Arial, Helvetica, sans-serif" font-size="${sz}" font-weight="${peso}" fill="${col}" text-anchor="${anc}">${sx(t)}</text>`;
+  const corta = (t, sz, w) => { t = String(t ?? ''); const n = Math.floor(w / (sz*0.58)); return t.length > n ? t.slice(0, Math.max(1,n-1)) + '…' : t; };
+  const envolver = (t, sz, w) => { const n = Math.floor(w / (sz*0.56)); const out = []; let l = ''; String(t).split(' ').forEach(p => { if ((l + ' ' + p).trim().length > n){ if (l) out.push(l); l = p; } else l = (l + ' ' + p).trim(); }); if (l) out.push(l); return out; };
+  const pc = (a,b) => b ? (a*100/b).toFixed(1).replace('.',',') + '%' : '0%';
+  const EST = {SIN:['Sin novedad',X.ok,X.okb], CON:['Con novedad',X.wa,X.wab], FUE:['Fuera de servicio',X.ba,X.bab], ND:['Sin datos',X.gr,X.grb], SC:['Sin cámaras',X.gr,X.grb]};
+  const bloques = [];
+  const add = (h, fn, o={}) => bloques.push(Object.assign({h, fn}, o));
+  const salto = () => bloques.push({br:true});
+  const titulo = (t, col=X.nav) => add(64, y => T(M, y+40, t, 30, col, '700') + `<rect x="${M}" y="${y+52}" width="${CW}" height="4" fill="${X.cy}"/>`, {keep:true});
+  const subt = (t) => add(46, y => T(M, y+32, t, 24, X.t2), {keep:true});
+  const tabla = (id, cols, filas) => {
+    const head = y => { let g = `<rect x="${M}" y="${y}" width="${CW}" height="44" fill="${X.nav}"/>`; let x = M; cols.forEach(c => { g += T(c.a==='end' ? x+c.w-14 : x+14, y+29, c.t, 20, '#fff', '700', c.a||'start'); x += c.w; }); return g; };
+    add(44, head, {tabla:id, cab:true, keep:true});
+    filas.forEach((f,i) => add(40, y => { let g = `<rect x="${M}" y="${y}" width="${CW}" height="40" fill="${f.fondo || (i%2 ? '#fff' : X.fo)}"/>`; let x = M;
+      cols.forEach((c,j) => { const v = f.v[j]; const col = (f.col && f.col[j]) || X.tx; g += T(c.a==='end' ? x+c.w-14 : x+14, y+27, corta(v, 19, c.w-24), 19, col, (f.bold && f.bold[j]) ? '700' : '400', c.a||'start'); x += c.w; });
+      return g; }, {tabla:id, cabFn:head}));
+    add(24, () => '');
+  };
+  const kpis = (Rx) => {
+    const tot = Rx.enc + Rx.apa + Rx.nd;
+    add(190, y => { const card = (x, w, val, lab, sub, col, fondo) => `<rect x="${x}" y="${y}" width="${w}" height="170" rx="18" fill="${fondo}"/>` + T(x+26, y+46, lab, 24, col, '700') + T(x+26, y+116, String(val), 68, col, '700') + (sub ? T(x+26, y+152, sub, 22, col) : '');
+      const w = (CW-40)/3; return card(M, w, tot, 'CÁMARAS', 'total', X.nav, '#E4ECF6') + card(M+w+20, w, Rx.enc, 'ENCENDIDAS', pc(Rx.enc,tot), X.ok, X.okb) + card(M+2*(w+20), w, Rx.apa, 'APAGADAS', pc(Rx.apa,tot), X.ba, X.bab); });
+    add(80, y => `<rect x="${M}" y="${y}" width="${CW}" height="24" rx="12" fill="${X.ba}"/><rect x="${M}" y="${y}" width="${tot ? CW*Rx.enc/tot : 0}" height="24" rx="12" fill="${X.ok}"/>` +
+      T(M, y+62, [['PTZ','PTZ'],['FIJA','Fijas'],['LPR','LPR']].filter(([k]) => Rx.tipos[k].t).map(([k,l]) => `${l}: ${Rx.tipos[k].e} de ${Rx.tipos[k].t} encendidas`).join('   ·   '), 22, X.t2));
+    add(170, y => { const w = (CW-40)/3; const pcard = (x, val, lab, col, fondo) => `<rect x="${x}" y="${y}" width="${w}" height="130" rx="18" fill="${fondo}"/>` + T(x+26, y+74, String(val), 58, col, '700') + T(x+26, y+110, lab, 22, col, '700');
+      return T(M, y-6+0, '', 1, '#fff') + pcard(M, Rx.cuenta.SIN, `Puntos sin novedad (de ${Rx.lista.length})`, X.ok, X.okb) + pcard(M+w+20, Rx.cuenta.CON, 'Puntos con novedad', X.wa, X.wab) + pcard(M+2*(w+20), Rx.cuenta.FUE, 'Puntos fuera de servicio', X.ba, X.bab); });
+  };
+  const imagen = (svg, W, H, maxH) => { const k = Math.min(CW / W, maxH / H, 1.6); const w = W*k, h = H*k;
+    const interior = svg.replace(/^<svg[^>]*>/, '').replace(/<\/svg>\s*$/, ''); const vb = (svg.match(/viewBox="([^"]+)"/) || [])[1] || `0 0 ${W} ${H}`;
+    add(h + 20, y => `<svg x="${M + (CW-w)/2}" y="${y}" width="${w}" height="${h}" viewBox="${vb}">${interior}</svg>`); };
+  const hallazgos = (lista) => {
+    if (!lista.length){ add(50, y => T(M, y+30, 'Sin tramos por revisar.', 22, X.t2)); return; }
+    lista.forEach((x,i) => { const l1 = envolver(x.txt, 21, CW-60), l2 = envolver('➜ ' + x.revisar, 20, CW-60); const h = 22 + (l1.length + l2.length)*30;
+      const c = (x.nivel === 'RAMAL' || x.nivel === 'PUNTO') ? X.wa : (x.nivel === 'DEPENDIENTE' ? X.gr : X.ba);
+      add(h + 12, y => `<rect x="${M}" y="${y}" width="${CW}" height="${h}" rx="10" fill="${X.fo}"/><rect x="${M}" y="${y}" width="8" height="${h}" rx="4" fill="${c}"/>` +
+        l1.map((t,j) => T(M+30, y+36+j*30, t, 21, X.tx, '700')).join('') + l2.map((t,j) => T(M+30, y+36+(l1.length+j)*30, t, 20, X.t2)).join('')); });
+    add(16, () => '');
+  };
+  const SW = topo ? estadoSwitches(topo, rep) : null, st = topo ? estadoParadas(R, topo) : null, D = topo ? diagnosticar(topo, st, SW) : null;
+  const campo = topo ? topo.nodos.filter(n => n.tipo !== 'CORE' || paradasNodo(n).length) : [];
+  const fue = R.lista.filter(p => p.estado === 'FUE'), con = R.lista.filter(p => p.estado === 'CON');
+  /* ---- REPORTE GENERAL ---- */
+  titulo('REPORTE GENERAL');
+  subt(`${nombreAlcance()} · reporte del ${fechaTxt(rep.fecha)}`);
+  kpis(R);
+  const mv = municipiosVista();
+  if (mv){ titulo('POR MUNICIPIO');
+    tabla('mun', [{t:'Municipio',w:330},{t:'Cámaras',w:150,a:'end'},{t:'Encendidas',w:170,a:'end'},{t:'%',w:130,a:'end'},{t:'Sin nov.',w:110,a:'end'},{t:'Con nov.',w:100,a:'end'},{t:'Fuera',w:110,a:'end'}],
+      mv.map(m => { const ps = R.lista.filter(p => p.mun === m); const c = ps.reduce((a,p)=>a+p.cams.length,0), e = ps.reduce((a,p)=>a+p.enc,0), f = ps.filter(p=>p.estado==='FUE').length;
+        return {v:[m, c, e, pc(e,c), ps.filter(p=>p.estado==='SIN').length, ps.filter(p=>p.estado==='CON').length, f], col:[null,null,X.ok,e===c?X.ok:(e===0?X.ba:X.wa),X.ok,X.wa,f?X.ba:X.t2], bold:[0,0,1,1,0,0,1]}; })); }
+  if (topo && campo.length > 1){ titulo(topo.estrella ? 'RED DE NODOS' : 'RED DE FIBRA: ANILLO PRINCIPAL Y NODOS'); imagen(svgGeneral(topo, D, COL.excel), topo.estrella ? 680 : 640, topo.estrella ? 680 : 660, 820); }
+  if (topo){ titulo(SW.__servidores ? 'VERIFICACIÓN DE SWITCHES Y SERVIDORES' : 'VERIFICACIÓN DE SWITCHES DE NODO');
+    if (topo.core && topo.core.nota) subt(topo.core.nota.length > 95 ? topo.core.nota.slice(0,94) + '…' : topo.core.nota);
+    const cols = [{t:'Nodo',w:300},{t:'Switch',w:170},{t:'Puntos',w:120,a:'end'},{t:'Diagnóstico',w:510}];
+    if (SW.__servidores){ cols[3].w = 360; cols.splice(2, 0, {t:'Servidor',w:150}); }
+    tabla('sw', cols, topo.nodos.filter(n => n.ip).map(n => { const N = D.nodos[n.id], s = SW[n.id], v = SW[n.id+'__srv'], dg = diagSwitch(n, N);
+      const sTxt = s ? (s.Estado==='ENCENDIDA'?'Responde':'No responde') : 'Sin dato', sCol = s ? (s.Estado==='ENCENDIDA'?X.ok:X.ba) : X.t2;
+      const dCol = {OK:X.ok, NOV:X.wa, MAL:X.ba, ND:X.t2}[dg.nivel];
+      const vv = [n.nombre, sTxt, `${N.up}/${N.total}`, dg.txt], cc = [null, sCol, null, dCol];
+      if (SW.__servidores){ vv.splice(2, 0, v ? (v.Estado==='ENCENDIDA'?'Responde':'No responde') : (n.server ? 'Sin dato' : '—')); cc.splice(2, 0, v ? (v.Estado==='ENCENDIDA'?X.ok:X.ba) : X.t2); }
+      return {v: vv, col: cc, bold: [1,1,1,0,0]}; }));
+    titulo('TRAMOS A REVISAR SEGÚN LA RUTA DE LA FIBRA', X.ba); hallazgos(D.hall); }
+  titulo(`PUNTOS FUERA DE SERVICIO (${fue.length})`, X.ba);
+  if (fue.length) tabla('fue', [{t:'Punto',w:420},{t:'Nodo',w:250},{t:'Cám.',w:90,a:'end'},{t:'Causa novedad',w:340}], fue.map(p => ({v:[p.nombre, nodoDePunto(p.nombre) || p.mun || '', p.cams.length, nt[p.nombre] || ''], fondo:X.bab})));
+  else subt('No hay puntos fuera de servicio.');
+  titulo(`PUNTOS CON NOVEDAD (${con.length})`, X.wa);
+  if (con.length) tabla('con', [{t:'Punto',w:380},{t:'Cámaras apagadas',w:380},{t:'Apag.',w:90,a:'end'},{t:'Causa novedad',w:250}], con.map(p => ({v:[p.nombre, p.cams.filter(c => c.estado==='APAGADA').map(c => cod(c.nombre) === cod(p.nombre) && c.nombre.length > 12 ? c.nombre.replace(/^.*?(P\d+-?\d*|CAI ?\d+-?\d*|LPR\d+)/, '$1') : c.nombre).join(', '), `${p.apa}/${p.cams.length}`, nt[p.nombre] || ''], fondo:X.wab})));
+  else subt('No hay puntos con novedad.');
+  /* ---- DETALLE NODO POR NODO ---- */
+  if (topo){
+    campo.forEach(nd => {
+      salto();
+      const N = D.nodos[nd.id], s = SW[nd.id], v = SW[nd.id+'__srv'];
+      titulo(`DETALLE · ${textoAlcance(current, {t:'n', v:nd.id}).toUpperCase()}`);
+      const lin = [`Switch ${nd.ip || '—'}: ${s ? (s.Estado==='ENCENDIDA'?'responde':'NO responde') : 'sin dato'}`];
+      if (nd.server) lin.push(`Servidor ${nd.server}: ${v ? (v.Estado==='ENCENDIDA'?'responde':'NO responde') : 'sin dato'}`);
+      lin.push(`${N.up} de ${N.total} puntos con señal · ${nd.anillos.length ? nd.anillos.length + ' anillo' + (nd.anillos.length>1?'s':'') : 'recorrido pendiente'}${nd.ramales.length ? ' · ' + nd.ramales.length + ' enlace' + (nd.ramales.length>1?'s':'') + ' directo' + (nd.ramales.length>1?'s':'') + ' o ramal' + (nd.ramales.length>1?'es':'') : ''}`);
+      add(20 + lin.length*34, y => lin.map((t,i) => T(M, y+30+i*34, t, 23, i < lin.length-1 && /NO responde/.test(t) ? X.ba : X.tx, i < lin.length-1 ? '700' : '400')).join(''));
+      const sv = svgNodo(topo, nd, st, COL.excel); imagen(sv.svg, sv.W, sv.H, 760);
+      const orden = []; if (nd.local) orden.push(nd.local); nd.anillos.forEach(a => a.paradas.forEach(x => orden.push(x.p))); nd.ramales.forEach(r => r.paradas.forEach(x => orden.push(x.p))); (nd.puntos||[]).forEach(p => orden.push(p));
+      const vistos = new Set(), filas = [];
+      orden.forEach(p => { if (vistos.has(p)) return; vistos.add(p); const e = st[p]; const es = e ? e.estado : 'SC'; const pn = e ? [...e.puntos][0] : null;
+        filas.push({v:[p, e ? e.cams.length : 0, e ? e.enc : 0, e ? e.apa : 0, EST[es][0], (pn && nt[pn]) || ''], col:[null,null,X.ok,(e && e.apa)?X.ba:X.t2,EST[es][1],null], bold:[1,0,1,1,1,0], fondo: es === 'FUE' ? X.bab : (es === 'CON' ? X.wab : null)}); });
+      tabla('n_'+nd.id, [{t:'Punto',w:380},{t:'Cám.',w:80,a:'end'},{t:'Enc.',w:80,a:'end'},{t:'Apag.',w:90,a:'end'},{t:'Estado',w:230},{t:'Causa novedad',w:240}], filas);
+      const hs = D.hall.filter(x => x.nodo === nd.nombre);
+      if (hs.length){ titulo('TRAMOS A REVISAR EN ESTE NODO', X.ba); hallazgos(hs); }
+    });
+  }
+  /* ---- paginado ---- */
+  const paginas = []; let pag = [], y = TOP, tablaAct = null;
+  const nueva = () => { paginas.push(pag); pag = []; y = TOP; };
+  bloques.forEach((b, i) => {
+    if (b.br){ if (pag.length) nueva(); tablaAct = null; return; }
+    if (b.keep && pag.length){ let h = b.h, j = i + 1; while (j < bloques.length && bloques[j].keep && !bloques[j].br){ h += bloques[j].h; j++; } if (j < bloques.length && !bloques[j].br) h += bloques[j].h; if (y + h > BOT) nueva(); }
+    if (y + b.h > BOT){ nueva(); if (b.tabla && !b.cab && b.cabFn){ pag.push({y, fn:b.cabFn}); y += 44; } }
+    pag.push({y, fn:b.fn}); y += b.h;
+  });
+  if (pag.length) paginas.push(pag);
+  return paginas.map((p, i) => {
+    let g = `<rect width="${PW}" height="${PH}" fill="#fff"/><rect x="0" y="0" width="${PW}" height="110" fill="${X.nav}"/><rect x="0" y="110" width="${PW}" height="6" fill="${X.cy}"/>`;
+    g += `<rect x="${M-10}" y="18" width="160" height="76" rx="10" fill="#fff"/>` + T(M+180, 52, 'REPORTE DE ESTADO DE CÁMARAS CCTV', 22, '#BFD4F2', '700') + T(M+180, 88, corta(nombreAlcance().toUpperCase() + ' · ' + fechaTxt(rep.fecha), 28, PW-M-(M+180)), 28, '#fff', '700');
+    g += `<line x1="${M}" y1="${PH-60}" x2="${PW-M}" y2="${PH-60}" stroke="${X.li}" stroke-width="2"/>` + T(M, PH-28, `Generado ${ahora()} · eLatin – Monitoreo CCTV`, 18, X.t2) + T(PW-M, PH-28, `Página ${i+1} de ${paginas.length}`, 18, X.t2, '700', 'end');
+    p.forEach(b => g += b.fn(b.y));
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${PW} ${PH}" width="${PW}" height="${PH}">${g}</svg>`;
+  });
+}
+function paginaAImagen(svg){
+  return new Promise((ok, fail) => {
+    const img = new Image();
+    img.onload = () => { const cv = document.createElement('canvas'); cv.width = 1240; cv.height = 1754; const cx = cv.getContext('2d');
+      cx.fillStyle = '#fff'; cx.fillRect(0,0,1240,1754); cx.drawImage(img, 0, 0);
+      const lg = new Image(); lg.onload = () => { const h = 62, w = lg.width*h/lg.height; cx.drawImage(lg, 60 + (160-w)/2, 18 + (76-h)/2, w, h); ok(cv.toDataURL('image/jpeg', 0.9)); };
+      lg.onerror = () => ok(cv.toDataURL('image/jpeg', 0.9)); lg.src = 'data:image/png;base64,' + LOGO_B64; };
+    img.onerror = fail; img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svg)));
+  });
+}
+async function reportePDF(R, rep, compartirArchivo){
+  toast('Preparando el PDF…');
+  const jsPDF = await obtenerJsPDF();
+  if (!jsPDF){ toast('No se pudo cargar el generador de PDF. Revisa la conexión a internet.'); return; }
+  let blob;
+  try {
+    const paginas = componerPaginasPDF(R, rep);
+    const doc = new jsPDF({unit:'pt', format:'a4', orientation:'portrait', compress:true});
+    for (let i = 0; i < paginas.length; i++){
+      const jpg = await paginaAImagen(paginas[i]);
+      if (i) doc.addPage('a4', 'portrait');
+      doc.addImage(jpg, 'JPEG', 0, 0, 595.28, 841.89, undefined, 'FAST');
+    }
+    doc.setProperties({title: 'Reporte de cámaras ' + nombreAlcance(), creator: 'eLatin – Estado de cámaras'});
+    blob = doc.output('blob');
+  } catch(e){ toast('No se pudo generar el PDF'); return; }
+  const f = (rep.fecha.match(/(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2}):(\d{2})/) || []);
+  const sello = f.length ? `${f[1]}-${f[2]}-${f[3]}_${f[4].padStart(2,'0')}-${f[5]}` : new Date().toISOString().slice(0,10);
+  const nombre = `REPORTE CAMARAS ${nombreAlcance().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'')} ${sello}.pdf`;
+  if (compartirArchivo){
+    try { const file = new File([blob], nombre, {type:'application/pdf'});
+      if (navigator.canShare && navigator.canShare({files:[file]})){ await navigator.share({files:[file], title: nombre}); return; } }
+    catch(e){ if (e && e.name === 'AbortError') return; }
+    toast('Este navegador no permite compartir el archivo directamente: se descargará');
+  }
+  if (dlPromise){ let dl = null; try { dl = await dlPromise; } catch(e){}
+    if (!dl){ toast('La descarga no está disponible en esta vista'); return; }
+    try { await dl.save({filename: nombre, data: blob}); toast('PDF descargado'); } catch(e){ if (!(e && e.code === 'declined')) toast('No se pudo descargar el PDF aquí'); }
+    return; }
+  const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = nombre; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 5000); toast('PDF descargado');
+}
+
+function svgResumen(R, rep){
+  const cat = CATS[current], W = 1080, nt = notas();
+  const tot = R.enc + R.apa + R.nd, pc = (a,b) => b ? (a*100/b).toFixed(1).replace('.',',') + '%' : '0%';
+  const X = {nav:'#203868', az:'#0860A8', cy:'#00A8E8', ok:'#23845A', okb:'#DDF1E6', wa:'#B7790F', wab:'#FBEFD2', ba:'#C23B2E', bab:'#F9DEDA', tx:'#1B2B48', t2:'#4A5D70', li:'#D3DCE4', fo:'#EDF2F8'};
+  const T = (x,y,t,sz,col,peso='400',anc='start') => `<text x="${x}" y="${y}" font-family="Arial, Helvetica, sans-serif" font-size="${sz}" font-weight="${peso}" fill="${col}" text-anchor="${anc}">${sx(t)}</text>`;
+  const corta = (t, sz, maxW) => { const n = Math.floor(maxW / (sz*0.62)); return t.length > n ? t.slice(0, n-1) + '…' : t; };
+  let g = '', y = 0;
+  // encabezado
+  g += `<rect x="0" y="0" width="${W}" height="200" fill="${X.nav}"/><rect x="0" y="200" width="${W}" height="8" fill="${X.cy}"/>`;
+  g += `<rect x="40" y="40" width="210" height="120" rx="14" fill="#fff"/>`;
+  g += T(290, 82, 'ESTADO DE CÁMARAS CCTV', 30, '#BFD4F2', '700') + T(290, 132, nombreAlcance().toUpperCase(), nombreAlcance().length > 18 ? 38 : 48, '#fff', '700') + T(290, 172, 'Reporte del ' + fechaTxt(rep.fecha), 26, '#fff');
+  y = 250;
+  // tarjetas de camaras
+  const card = (x, w, val, lab, sub, col, fondo) => `<rect x="${x}" y="${y}" width="${w}" height="170" rx="18" fill="${fondo}"/>` + T(x+28, y+48, lab, 26, col, '700') + T(x+28, y+120, String(val), 72, col, '700') + (sub ? T(x+28, y+155, sub, 24, col) : '');
+  g += card(40, 316, tot, 'CÁMARAS', 'total', X.nav, '#E4ECF6') + card(382, 316, R.enc, 'ENCENDIDAS', pc(R.enc,tot), X.ok, X.okb) + card(724, 316, R.apa, 'APAGADAS', pc(R.apa,tot), X.ba, X.bab);
+  y += 200;
+  const wOk = tot ? (W-80)*R.enc/tot : 0;
+  g += `<rect x="40" y="${y}" width="${W-80}" height="26" rx="13" fill="${X.ba}"/><rect x="40" y="${y}" width="${wOk}" height="26" rx="13" fill="${X.ok}"/>`;
+  y += 60;
+  const tip = [['PTZ','PTZ'],['FIJA','Fijas'],['LPR','LPR']].filter(([k]) => R.tipos[k].t).map(([k,l]) => `${l}: ${R.tipos[k].e} de ${R.tipos[k].t} encendidas`).join('   ·   ');
+  g += T(40, y, tip, 25, X.t2); y += 50;
+  // puntos
+  g += T(40, y, `PUNTOS DE CÁMARA (${R.lista.length})`, 28, X.nav, '700'); y += 24;
+  const pcard = (x, val, lab, col, fondo) => `<rect x="${x}" y="${y}" width="316" height="130" rx="18" fill="${fondo}"/>` + T(x+28, y+76, String(val), 60, col, '700') + T(x+28, y+112, lab, 24, col, '700');
+  g += pcard(40, R.cuenta.SIN, 'Sin novedad', X.ok, X.okb) + pcard(382, R.cuenta.CON, 'Con novedad', X.wa, X.wab) + pcard(724, R.cuenta.FUE, 'Fuera de servicio', X.ba, X.bab);
+  y += 170;
+  // por municipio
+  if (municipiosVista()){
+    g += T(40, y, 'POR MUNICIPIO', 28, X.nav, '700'); y += 16;
+    g += `<rect x="40" y="${y}" width="${W-80}" height="44" fill="${X.nav}"/>` + T(60, y+30, 'Municipio', 23, '#fff', '700') + T(560, y+30, 'Encendidas', 23, '#fff', '700', 'end') + T(760, y+30, '%', 23, '#fff', '700', 'end') + T(1020, y+30, 'Puntos fuera', 23, '#fff', '700', 'end');
+    y += 44;
+    municipiosVista().forEach((m,i) => { const ps = R.lista.filter(p => p.mun === m); const c = ps.reduce((a,p)=>a+p.cams.length,0), e = ps.reduce((a,p)=>a+p.enc,0), f = ps.filter(p=>p.estado==='FUE').length;
+      g += `<rect x="40" y="${y}" width="${W-80}" height="42" fill="${i%2?'#fff':X.fo}"/>` + T(60, y+29, m, 23, X.tx) + T(560, y+29, `${e} / ${c}`, 23, X.tx, '400', 'end') + T(760, y+29, pc(e,c), 23, e===c?X.ok:(e===0?X.ba:X.wa), '700', 'end') + T(1020, y+29, String(f), 23, f?X.ba:X.t2, f?'700':'400', 'end');
+      y += 42; });
+    y += 40;
+  }
+  // listas
+  const fue = R.lista.filter(p => p.estado === 'FUE'), con = R.lista.filter(p => p.estado === 'CON');
+  const lista = (titulo, items, col, fondo, max) => {
+    if (!items.length) return;
+    g += T(40, y, titulo, 28, col, '700'); y += 18;
+    const mostrar = items.slice(0, max), filas = Math.ceil(mostrar.length/2);
+    g += `<rect x="40" y="${y}" width="${W-80}" height="${filas*40 + 24 + (items.length > max ? 40 : 0)}" rx="16" fill="${fondo}"/>`;
+    mostrar.forEach((t,i) => { const col2 = i >= filas; const xx = col2 ? 560 : 64, yy = y + 42 + (col2 ? i-filas : i)*40;
+      g += `<circle cx="${xx}" cy="${yy-8}" r="7" fill="${col}"/>` + T(xx+18, yy, corta(t, 23, 440), 23, X.tx); });
+    y += filas*40 + 24;
+    if (items.length > max){ g += T(64, y+26, `… y ${items.length - max} más (ver la app o el Excel)`, 22, X.t2); y += 40; }
+    y += 44;
+  };
+  lista(`FUERA DE SERVICIO (${fue.length})`, fue.map(p => p.nombre + (nt[p.nombre] ? ' – ' + nt[p.nombre] : '')), X.ba, X.bab, 30);
+  lista(`CON NOVEDAD (${con.length})`, con.map(p => `${p.nombre}: ${p.apa}/${p.cams.length} apagadas`), X.wa, X.wab, 24);
+  // red y switches
+  const topo = getTopo();
+  if (topo){
+    const SW = estadoSwitches(topo, rep), D = diagnosticar(topo, estadoParadas(R, topo), SW);
+    const swOff = topo.nodos.filter(n => SW[n.id] && SW[n.id].Estado === 'APAGADA').map(n => n.nombre);
+    const svOff = topo.nodos.filter(n => SW[n.id+'__srv'] && SW[n.id+'__srv'].Estado === 'APAGADA').map(n => n.nombre);
+    const lin = [];
+    if (SW.__hay) lin.push(swOff.length ? `Switches de nodo que no responden: ${swOff.join(', ')}` : 'Todos los switches de nodo responden');
+    if (SW.__servidores && svOff.length) lin.push(`Servidores locales que no responden: ${svOff.join(', ')}`);
+    if (D.hall.length) lin.push(`${D.hall.length} tramo${D.hall.length>1?'s':''} a revisar según la ruta de la fibra (detalle en la app)`);
+    if (lin.length){ g += T(40, y, 'RED', 28, X.nav, '700'); y += 12; lin.forEach(l => { y += 36; g += T(40, y, corta(l, 23, W-80), 23, X.tx); }); y += 40; }
+  }
+  const nMan = SHARED ? SHARED.manuales : rep.rows.filter(r => r.Manual).length;
+  y += 10; g += `<rect x="0" y="${y}" width="${W}" height="70" fill="${X.fo}"/>` + T(40, y+44, `Generado ${ahora()}${nMan ? ` · incluye ${nMan} cambio${nMan>1?'s':''} de estado hecho${nMan>1?'s':''} a mano` : ''}`, 22, X.t2);
+  y += 70;
+  return {svg:`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${y}" width="${W}" height="${y}"><rect width="${W}" height="${y}" fill="#fff"/>${g}</svg>`, W, H:y};
+}
+function pngResumen(R, rep){
+  const {svg, W, H} = svgResumen(R, rep);
+  return new Promise((ok, fail) => {
+    const img = new Image();
+    img.onload = () => {
+      const cv = document.createElement('canvas'); cv.width = W; cv.height = H; const cx = cv.getContext('2d');
+      cx.fillStyle = '#fff'; cx.fillRect(0,0,W,H); cx.drawImage(img, 0, 0, W, H);
+      const lg = new Image();
+      lg.onload = () => { const h = 96, w = lg.width * h / lg.height; cx.drawImage(lg, 40 + (210-w)/2, 40 + (120-h)/2, w, h); cv.toBlob(b => b ? ok(b) : fail(new Error('png')), 'image/png'); };
+      lg.onerror = () => cv.toBlob(b => b ? ok(b) : fail(new Error('png')), 'image/png');
+      lg.src = 'data:image/png;base64,' + LOGO_B64;
+    };
+    img.onerror = fail;
+    img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svg)));
+  });
+}
+async function imagenResumen(R, rep){
+  toast('Preparando la imagen…');
+  let blob;
+  try { blob = await pngResumen(R, rep); } catch(e){ toast('No se pudo generar la imagen'); return; }
+  const f = (rep.fecha.match(/(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2}):(\d{2})/) || []);
+  const sello = f.length ? `${f[1]}-${f[2]}-${f[3]}_${f[4].padStart(2,'0')}-${f[5]}` : new Date().toISOString().slice(0,10);
+  const nombre = `Estado camaras ${nombreAlcance().normalize('NFD').replace(/[\u0300-\u036f]/g,'')} ${sello}.png`;
+  const url = URL.createObjectURL(blob);
+  $('#sheet').innerHTML = `<h3 id="dlgTitle">Resumen en imagen</h3><div class="sub">${esc(nombreAlcance())} · ${esc(fechaTxt(rep.fecha))}</div>
+    <img class="imgprev" src="${url}" alt="Resumen del estado de las cámaras">
+    <div class="sheetbtns"><button class="btn" id="shImg" type="button">Compartir</button><button class="btn ghost" id="dlImg" type="button">Descargar</button><button class="btn ghost" id="cerrar" type="button">Cerrar</button></div>`;
+  const d = $('#dlg'); if (!d.open) d.showModal();
+  $('#cerrar').onclick = () => d.close();
+  const descargar = async () => {
+    if (dlPromise){ let dl = null; try { dl = await dlPromise; } catch(e){}
+      if (dl){ try { await dl.save({filename: nombre, data: blob}); toast('Imagen descargada'); } catch(e){ if (!(e && e.code === 'declined')) toast('No se pudo descargar aquí'); } return; } }
+    const a = document.createElement('a'); a.href = url; a.download = nombre; document.body.appendChild(a); a.click(); a.remove(); toast('Imagen descargada');
+  };
+  $('#dlImg').onclick = descargar;
+  $('#shImg').onclick = async () => {
+    const file = new File([blob], nombre, {type:'image/png'});
+    try {
+      if (navigator.canShare && navigator.canShare({files:[file]})){ await navigator.share({files:[file], title:'Estado de cámaras ' + nombreAlcance()}); return; }
+    } catch(e){ if (e && e.name === 'AbortError') return; }
+    toast('Este navegador no permite compartir la imagen directamente: se descargará para que la envíes');
+    descargar();
+  };
+}
 function svgAPng(svg, W, H, escala=2){
   return new Promise((ok, fail) => {
     const img = new Image();
@@ -605,7 +886,9 @@ function calcular(key, rep){
     if (estado === 'ENCENDIDA') p.enc++; else if (estado === 'APAGADA') p.apa++;
     if (inf.tipo === 'PTZ') p.ptz++; else if (inf.tipo === 'LPR') p.lpr++; else p.fija++;
   });
-  const lista = cat.puntos.map(n => puntos[n]);
+  let lista = cat.puntos.map(n => puntos[n]);
+  const aK = (SHARED && SHARED.k === key && SHARED.alc) ? SHARED.alc : (key === current ? ALC_TMP : null);
+  if (aK) lista = aK.t === 'm' ? lista.filter(p => p.mun === aK.v) : lista.filter(p => p.cams.length);
   lista.forEach(p => { p.estado = (p.enc + p.apa === 0) ? 'ND' : (p.enc === 0 ? 'FUE' : (p.apa === 0 ? 'SIN' : 'CON')); });
   const cuenta = {SIN:0, CON:0, FUE:0, ND:0}; lista.forEach(p => cuenta[p.estado]++);
   return {lista, cuenta, tipos, enc, apa, nd, total: rep.rows.length, sinPunto};
@@ -621,11 +904,54 @@ function codigo(p){
   return {c: m[1].replace('CAI ','CAI'), m: p.slice(m.index + m[0].length).trim()};
 }
 function toast(t){ const el = $('#toast'); el.textContent = t; el.classList.add('show'); clearTimeout(toast._t); toast._t = setTimeout(() => el.classList.remove('show'), 2200); }
-function notas(){ return store.get('cctv:notas:' + current) || {}; }
+function notas(){ return (SHARED && SHARED.k === current) ? SHARED.notas : (store.get('cctv:notas:' + current) || {}); }
+let SHARED = null;   // reporte abierto desde un link (solo lectura)
+function getRep(k){ return (SHARED && SHARED.k === k) ? SHARED.rep : store.get('cctv:rep:' + k); }
+let ALC_TMP = null;   // alcance elegido en el menú Compartir (texto, imagen, Excel)
+function alcActual(){ return (SHARED && SHARED.k === current && SHARED.alc) ? SHARED.alc : ALC_TMP; }
+function repAlcance(rep, alc){
+  if (!alc) return rep;
+  const k = current, alias = CATS[k].alias || {}, cams = camsAlcance(k, alc);
+  const nombres = new Set(cams.map(c => c[0]));
+  const topo = TOPO[k], ips = new Set();
+  if (topo){ const pts = new Set(cams.map(c => c[1])), par = new Set(cams.map(c => stopDeCamara(c[0], c[1], topo)));
+    topo.nodos.filter(n => alc.t === 'n' ? n.id === alc.v : paradasNodo(n).some(p => pts.has(p) || par.has(p))).forEach(n => { if (n.ip) ips.add(n.ip); if (n.server) ips.add(n.server); }); }
+  return Object.assign({}, rep, {rows: rep.rows.filter(r => nombres.has(alias[r.Nombre] || r.Nombre)), switches: (rep.switches || []).filter(x => ips.has(x.IP)), prev: null});
+}
+async function conAlcance(alc, fn){
+  const base = getRep(current); if (!base) return;
+  if (!alc || (SHARED && SHARED.alc)) return fn(ultimoR, base);
+  ALC_TMP = alc;
+  try { const r = repAlcance(base, alc); const R = calcular(current, r); await fn(R, r); }
+  finally { ALC_TMP = null; }
+}
+function nombreNodo(k, id){ const t = TOPO[k]; const n = t && t.nodos.find(x => x.id === id); return n ? n.nombre : id; }
+function textoAlcance(k, alc){ if (!alc) return ''; if (alc.t === 'm') return alc.v; const n = nombreNodo(k, alc.v); return /^NODO\b/i.test(n) ? n : 'Nodo ' + n; }
+function camsAlcance(k, alc){
+  const cat = CATS[k]; if (!alc) return cat.cams;
+  if (alc.t === 'm') return cat.cams.filter(c => c[3] === alc.v);
+  const t = TOPO[k], nd = t && t.nodos.find(n => n.id === alc.v); if (!nd) return [];
+  const ps = new Set(paradasNodo(nd)); return cat.cams.filter(c => ps.has(stopDeCamara(c[0], c[1], t)));
+}
+function nombreAlcance(){ const a = alcActual(); return CATS[current].nombre + (a ? ' – ' + textoAlcance(current, a) : ''); }
+function municipiosVista(){ const c = CATS[current]; if (!c.municipios) return null; const a = alcActual(); return (a && a.t === 'm') ? [a.v] : c.municipios; }
+function getTopo(){
+  const t = TOPO[current], a = alcActual(); if (!t || !a) return t;
+  if (a.t === 'n') return Object.assign({}, t, {anilloPrincipal: [], nodos: t.nodos.filter(n => n.id === a.v)});
+  const alc = new Set(CATS[current].cams.filter(c => c[3] === a.v).map(c => c[1]));
+  return Object.assign({}, t, {nodos: t.nodos.filter(n => n.tipo === 'CORE' || paradasNodo(n).some(p => alc.has(p)))});
+}
 function fechaTxt(f){ if (!f) return ''; const m = f.match(/(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2}):(\d{2})/); return m ? `${m[3]}/${m[2]}/${m[1]} · ${m[4]}:${m[5]}` : f; }
 
 /* ---------- render ---------- */
 function renderSystems(){
+  if (SHARED){
+    $('#systems').innerHTML = `<div class="shbanner"><span>🔗 Reporte compartido · <b>${esc(nombreAlcance())}</b> · solo lectura</span><button class="sys" type="button" id="salirSh">Salir</button></div>`;
+    $('#salirSh').onclick = () => { history.replaceState(null, '', location.pathname + location.search); SHARED = null; current = store.get('cctv:sel') || 'pereira'; render(); };
+    document.querySelector('label[for=file]').style.display = 'none';
+    return;
+  }
+  const lf = document.querySelector('label[for=file]'); if (lf) lf.style.display = '';
   $('#systems').innerHTML = ORDER.map(k => {
     const rep = store.get('cctv:rep:' + k);
     return `<button class="sys" type="button" data-k="${k}" aria-pressed="${k===current}"><span class="dot ${rep?'on':''}"></span>${esc(CATS[k].nombre)}</button>`;
@@ -635,7 +961,7 @@ function renderSystems(){
 
 function render(){
   renderSystems();
-  const rep = store.get('cctv:rep:' + current);
+  const rep = getRep(current);
   const main = $('#main');
   if (!rep){
     main.innerHTML = `<div class="intro"><h1>${esc(CATS[current].nombre)}: sin reporte cargado</h1>
@@ -646,7 +972,7 @@ function render(){
   const R = calcular(current, rep); ultimoR = R;
   const nt = notas();
   const tot = R.enc + R.apa + R.nd;
-  let h = `<div class="hero"><h1>${esc(CATS[current].nombre)} · reporte del ${esc(fechaTxt(rep.fecha))}</h1>
+  let h = `<div class="hero"><h1>${esc(nombreAlcance())} · reporte del ${esc(fechaTxt(rep.fecha))}</h1>
     <div class="count">${R.enc}<small> / ${tot} encendidas</small></div>
     <div class="bar" aria-hidden="true"><span class="b-ok" style="width:${tot?R.enc*100/tot:0}%"></span><span class="b-bad" style="width:${tot?R.apa*100/tot:0}%"></span></div>
     <div class="barlegend"><span>Encendidas <b>${pct(R.enc,tot)}</b></span><span>Apagadas <b>${R.apa}</b> (${pct(R.apa,tot)})</span></div></div>`;
@@ -685,10 +1011,10 @@ function render(){
   h += `</section>`;
 
   // por municipio
-  if (CATS[current].municipios){
+  if (municipiosVista()){
     h += `<section><h2>Por municipio <span class="meta">toca un municipio para filtrar</span></h2><div class="tblwrap"><table class="tbl"><thead><tr><th>Municipio</th><th>Cámaras</th><th>Enc.</th><th>Apag.</th><th>%</th><th>Fuera</th><th>Novedad</th></tr></thead><tbody>`;
     let T = {c:0,e:0,a:0,f:0,n:0};
-    CATS[current].municipios.forEach(m => {
+    municipiosVista().forEach(m => {
       const ps = R.lista.filter(p => p.mun === m);
       const c = ps.reduce((a,p)=>a+p.cams.length,0), e = ps.reduce((a,p)=>a+p.enc,0), a = ps.reduce((x,p)=>x+p.apa,0);
       const f = ps.filter(p=>p.estado==='FUE').length, n = ps.filter(p=>p.estado==='CON').length;
@@ -734,8 +1060,10 @@ function render(){
   const clr = $('#clr'); if (clr) clr.onclick = () => { filtro = null; munFiltro = null; render(); };
   aplicarFiltro();
   eventosRed(R);
-  $('#share').onclick = () => compartir(R, rep);
+  $('#share').onclick = () => menuCompartir(R, rep);
   $('#xls').onclick = () => descargarExcel(R, rep);
+  $('#img').onclick = () => imagenResumen(R, rep);
+  $('#pdf').onclick = () => reportePDF(R, rep, false);
 }
 
 function itemPunto(p, R, nt, soloApagadas){
@@ -767,7 +1095,7 @@ function abrir(p){
     const cls = c.estado==='ENCENDIDA'?'on':(c.estado==='APAGADA'?'off':'nd');
     const txt = c.estado==='ENCENDIDA'?'Encendida':(c.estado==='APAGADA'?'Apagada':(c.estado||'Sin dato'));
     const man = c.manual ? `<div class="man">Cambiado a mano el ${esc(c.manual.fecha)} (el reporte decía ${c.manual.antes==='ENCENDIDA'?'encendida':'apagada'})</div>` : '';
-    return `<div class="cam"><div><div class="cn">${esc(c.nombre)}</div><div class="ci">${esc(c.tipo)} · ${esc(c.ip||'sin IP')} · ping ${esc(c.ping||'-')} · web ${esc(c.web||'-')} · RTSP ${esc(c.rtsp||'-')}</div>${man}</div>
+    return `<div class="cam"><div><div class="cn">${esc(c.nombre)}</div><div class="ci">${SHARED ? esc(c.tipo) : `${esc(c.tipo)} · ${esc(c.ip||'sin IP')} · ping ${esc(c.ping||'-')} · web ${esc(c.web||'-')} · RTSP ${esc(c.rtsp||'-')}`}</div>${man}</div>
       <button class="cs ${cls}" type="button" data-orig="${esc(c.orig)}" aria-label="${esc(c.nombre)}: ${txt}. Toca para cambiar el estado">${txt}</button></div>`;
   }).join('');
   $('#sheet').innerHTML = `<h3 id="dlgTitle">${esc(p.nombre)}</h3><div class="sub">${p.mun?esc(p.mun)+' · ':''}${ST[p.estado]} · ${p.enc} encendidas, ${p.apa} apagadas</div><p class="hint">Si se solucionó una novedad, toca el estado de la cámara para cambiarlo.</p>${cams}
@@ -775,6 +1103,12 @@ function abrir(p){
     <div class="sheetbtns"><button class="btn" id="guardar" type="button">Guardar causa</button><button class="btn ghost" id="cerrar" type="button">Cerrar</button></div>`;
   const d = $('#dlg'); if (!d.open) d.showModal();
   $('#cerrar').onclick = () => d.close();
+  if (SHARED){
+    const h = $('#sheet .hint'); if (h) h.remove();
+    const ta = $('#nota'); ta.readOnly = true; if (!ta.value) ta.placeholder = 'Sin causa registrada';
+    $('#guardar').remove(); document.querySelectorAll('#sheet .cs').forEach(b => { b.disabled = true; b.style.cursor = 'default'; });
+    return;
+  }
   document.querySelectorAll('#sheet .cs').forEach(b => b.onclick = () => {
     const borrador = $('#nota').value;
     cambiarEstado(b.dataset.orig);
@@ -821,7 +1155,7 @@ function construirLibro(R, rep){
   const A = []; const pc = [];
   const add = fila => { A.push(fila); return A.length; };
   const cel = (col, fila) => XLSX.utils.encode_cell({c:col, r:fila-1});
-  add([`RESUMEN DE ESTADO DE CÁMARAS – CCTV ${cat.nombre.toUpperCase()}`]);
+  add([`RESUMEN DE ESTADO DE CÁMARAS – CCTV ${nombreAlcance().toUpperCase()}`]);
   add(['Fecha del reporte:', rep.fecha]);
   const nMan = rep.rows.filter(r => r.Manual).length;
   if (nMan) add(['Cambios de estado hechos a mano:', nMan, 'Ver columna "Cambio manual" en la hoja Reporte']);
@@ -845,7 +1179,7 @@ function construirLibro(R, rep){
     add([]); add(['TOTAL POR MUNICIPIO']);
     add(['Municipio','Puntos','Cámaras','Encendidas','Apagadas','% encendidas','Sin novedad','Con novedad','Fuera de servicio']);
     const T = [0,0,0,0,0,0,0];
-    cat.municipios.forEach(m => {
+    municipiosVista().forEach(m => {
       const ps = R.lista.filter(p => p.mun === m);
       const v = [ps.length, ps.reduce((a,p)=>a+p.cams.length,0), ps.reduce((a,p)=>a+p.enc,0), ps.reduce((a,p)=>a+p.apa,0),
                  ps.filter(p=>p.estado==='SIN').length, ps.filter(p=>p.estado==='CON').length, ps.filter(p=>p.estado==='FUE').length];
@@ -957,7 +1291,7 @@ async function construirLibroColor(ExcelJS, R, rep){
   for (let q = 0; q < 4; q++) wr.addRow([]);
   [1,2,3,4].forEach(q => wr.getRow(q).height = 16);
   wr.addImage(logoId, {tl:{col:0.15, row:0.15}, ext:{width:120, height:60}, editAs:'oneCell'});
-  const tc = wr.getCell('C2'); tc.value = `INFORME DE ESTADO DE CÁMARAS – CCTV ${cat.nombre.toUpperCase()}`; tc.font = fuente({bold:true, size:16, color:{argb:C.nav}});
+  const tc = wr.getCell('C2'); tc.value = `INFORME DE ESTADO DE CÁMARAS – CCTV ${nombreAlcance().toUpperCase()}`; tc.font = fuente({bold:true, size:16, color:{argb:C.nav}});
   const fc = wr.getCell('C3'); fc.value = `Fecha del reporte: ${rep.fecha}`; fc.font = fuente({size:11, color:{argb:C.azul2}});
   const franja = wr.addRow([]); franja.height = 5;
   for (let q = 1; q <= anchos.length; q++) franja.getCell(q).fill = fill(q <= 2 ? C.nav : (q <= anchos.length - 3 ? C.azul2 : C.cyan));
@@ -1001,7 +1335,7 @@ async function construirLibroColor(ExcelJS, R, rep){
         else if (n === 9) { o.fill = C.af; o.font = {bold:true, color:{argb:C.at}}; }
         if (n === 7) o.fmt = '0.0%';
         celda(c, o); }); };
-    cat.municipios.forEach(m => { const ps = R.lista.filter(p => p.mun === m);
+    municipiosVista().forEach(m => { const ps = R.lista.filter(p => p.mun === m);
       const v = [ps.length, ps.reduce((a,p)=>a+p.cams.length,0), ps.reduce((a,p)=>a+p.enc,0), ps.reduce((a,p)=>a+p.apa,0),
                  ps.filter(p=>p.estado==='SIN').length, ps.filter(p=>p.estado==='CON').length, ps.filter(p=>p.estado==='FUE').length];
       v.forEach((x,i) => T[i]+=x); filaMun(m, v, false); });
@@ -1032,7 +1366,7 @@ async function construirLibroColor(ExcelJS, R, rep){
   if (!k){ const row = wr.addRow(['', 'Ninguno']); row.getCell(2).font = fuente({italic:true, color:{argb:C.gt}}); }
 
   /* ---- Hoja Red de fibra ---- */
-  const topo = TOPO[current];
+  const topo = getTopo();
   if (topo){
     const SWR = estadoSwitches(topo, rep); const stR = estadoParadas(R, topo), DR = diagnosticar(topo, stR, SWR);
     const wf = wb.addWorksheet('Red de fibra', {views:[{showGridLines:false}]});
@@ -1072,7 +1406,7 @@ async function construirLibroColor(ExcelJS, R, rep){
       const k = Math.min(1, maxW / W); const w = W*k, h = H*k; const fila = wf.rowCount;
       wf.addImage(id, {tl:{col:1, row:fila}, ext:{width:w, height:h}, editAs:'oneCell'});
       for (let q = 0; q < Math.ceil(h/20)+1; q++) wf.addRow([]); };
-    const campoX = topo.nodos.filter(n => n.tipo !== 'CORE');
+    const campoX = topo.nodos.filter(n => n.tipo !== 'CORE' || paradasNodo(n).length);
     if (campoX.length > 1){
       let t1 = wf.addRow(['', topo.estrella ? 'NODOS CONECTADOS ' + (topo.core.al||'').toUpperCase() : 'ANILLO PRINCIPAL Y NODOS']); t1.getCell(2).font = fuente({bold:true,size:12,color:{argb:C.nav}});
       try { await img(svgGeneral(topo, DR, COL.excel), topo.estrella ? 680 : 640, topo.estrella ? 680 : 660, 760); } catch(e){ wf.addRow(['', '(No se pudo dibujar el diagrama en este equipo)']); }
@@ -1123,10 +1457,10 @@ async function construirLibroColor(ExcelJS, R, rep){
   return wb;
 }
 
-async function descargarExcel(R, rep){
+async function descargarExcel(R, rep, compartirArchivo){
   const f = (rep.fecha.match(/(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2}):(\d{2})/) || []);
   const sello = f.length ? `${f[1]}-${f[2]}-${f[3]}_${f[4].padStart(2,'0')}-${f[5]}` : new Date().toISOString().slice(0,10);
-  const nombre = `RESUMEN CAMARAS ${CATS[current].nombre.toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'')} ${sello}.xlsx`;
+  const nombre = `RESUMEN CAMARAS ${nombreAlcance().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'')} ${sello}.xlsx`;
   toast('Preparando el Excel…');
   let blob = null;
   const ExcelJS = await obtenerExcelJS();
@@ -1138,6 +1472,12 @@ async function descargarExcel(R, rep){
     if (typeof XLSX === 'undefined'){ toast('No se pudo generar el Excel. Revisa la conexión a internet.'); return; }
     blob = new Blob([XLSX.write(construirLibro(R, rep), {bookType:'xlsx', type:'array'})]);
     toast('Se generó el Excel sin colores');
+  }
+  if (compartirArchivo){
+    try { const file = new File([blob], nombre, {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+      if (navigator.canShare && navigator.canShare({files:[file]})){ await navigator.share({files:[file], title: nombre}); return; } }
+    catch(e){ if (e && e.name === 'AbortError') return; }
+    toast('Este navegador no permite compartir el archivo directamente: se descargará');
   }
   if (dlPromise){
     let dl = null; try { dl = await dlPromise; } catch(e){ dl = null; }
@@ -1155,10 +1495,105 @@ async function descargarExcel(R, rep){
   } catch(e){ toast('No se pudo descargar el Excel'); }
 }
 
+/* ---------- Menú Compartir ---------- */
+function urlBase(){
+  const guardada = store.get('cctv:baseurl'); if (guardada) return guardada;
+  const enClaude = location.protocol === 'file:' || /claude|anthropic|usercontent/i.test(location.hostname) || (window.claude && typeof window.claude.use === 'function');
+  return enClaude ? '' : location.origin + location.pathname;
+}
+function b64u(bytes){ let s = ''; bytes.forEach(b => s += String.fromCharCode(b)); return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }
+function deB64u(t){ t = t.replace(/-/g,'+').replace(/_/g,'/'); while (t.length % 4) t += '='; const s = atob(t); return Uint8Array.from(s, c => c.charCodeAt(0)); }
+async function comprimir(txt){
+  const bytes = new TextEncoder().encode(txt);
+  if (typeof CompressionStream === 'undefined') return 'j' + b64u(bytes);
+  try { const cs = new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate-raw')); return 'z' + b64u(new Uint8Array(await new Response(cs).arrayBuffer())); }
+  catch(e){ return 'j' + b64u(bytes); }
+}
+async function descomprimir(t){
+  const bytes = deB64u(t.slice(1));
+  if (t[0] === 'j') return new TextDecoder().decode(bytes);
+  const ds = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+  return new TextDecoder().decode(await new Response(ds).arrayBuffer());
+}
+async function crearLink(rep, alc){
+  const k = current, cat = CATS[k], alias = cat.alias || {};
+  const est = {}; rep.rows.forEach(r => est[alias[r.Nombre] || r.Nombre] = r.Estado);
+  const cams = camsAlcance(k, alc);
+  const s = cams.map(c => est[c[0]] === 'ENCENDIDA' ? '1' : (est[c[0]] === 'APAGADA' ? '0' : '-')).join('');
+  const puntosAlc = new Set(cams.map(c => c[1])); const nt = (SHARED && SHARED.k === k) ? SHARED.notas : (store.get('cctv:notas:' + k) || {});
+  const c = {}; Object.entries(nt).forEach(([p,v]) => { if (puntosAlc.has(p)) c[p] = v; });
+  const topo = TOPO[k]; const ips = new Set();
+  const paradasAlc = new Set(topo ? cams.map(c => stopDeCamara(c[0], c[1], topo)) : []);
+  if (topo) topo.nodos.filter(n => !alc || (alc.t === 'n' ? n.id === alc.v : paradasNodo(n).some(p => puntosAlc.has(p) || paradasAlc.has(p)))).forEach(n => { if (n.ip) ips.add(n.ip); if (n.server) ips.add(n.server); });
+  const w = (rep.switches || []).filter(x => ips.has(x.IP) || (!alc && /^GATEWAY/i.test(x.Nombre))).map(x => [x.IP, x.Estado === 'ENCENDIDA' ? 1 : 0, /^SERVIDOR/i.test(x.Nombre) ? 'V' : (/^GATEWAY/i.test(x.Nombre) ? 'G' : 'S')]);
+  const payload = {v:2, k, a: alc ? [alc.t, alc.v] : null, m: alc && alc.t === 'm' ? alc.v : null, f: rep.fecha, s, c, w, x: rep.rows.filter(r => r.Manual).length};
+  return urlBase().replace(/#.*$/, '') + '#r=' + await comprimir(JSON.stringify(payload));
+}
+async function abrirLinkCompartido(){
+  const h = location.hash; if (!h.startsWith('#r=')) return false;
+  try {
+    const p = JSON.parse(await descomprimir(h.slice(3)));
+    if (!CATS[p.k]) throw new Error('sistema');
+    const alc = p.a ? {t: p.a[0], v: p.a[1]} : (p.m ? {t:'m', v:p.m} : null);
+    const cams = camsAlcance(p.k, alc);
+    const rows = []; cams.forEach((c,i) => { const ch = p.s[i]; if (ch === '1' || ch === '0') rows.push({Municipio:c[3]||'', Nombre:c[0], IP:'', Estado: ch === '1' ? 'ENCENDIDA' : 'APAGADA', Responde_Ping:'', Puerto_Web_80:'', Puerto_RTSP:'', Revisado:p.f}); });
+    const switches = (p.w || []).map(([ip, e, t]) => ({Nombre: t === 'V' ? 'SERVIDOR' : (t === 'G' ? 'GATEWAY' : 'SWITCH'), IP: ip, Estado: e ? 'ENCENDIDA' : 'APAGADA', Responde_Ping: e ? 'Si' : 'No', Puerto_Web_80:'', Revisado:p.f}));
+    const rep = {fecha: p.f, rows, switches};
+    if (p.x) rep.rows.slice(0, 0);
+    SHARED = {k: p.k, alc, rep, notas: p.c || {}, manuales: p.x || 0};
+    current = p.k;
+    return true;
+  } catch(e){ toast('El link del reporte no es válido o está incompleto'); return false; }
+}
+function menuCompartir(R, rep){
+  const fijo = alcActual();
+  const t0 = TOPO[current]; const nodosOp = t0 ? t0.nodos.filter(n => paradasNodo(n).length) : [];
+  let opciones = '';
+  if (!fijo){
+    if (CATS[current].municipios) opciones = CATS[current].municipios.map(m => `<option value="m:${esc(m)}">${esc(m)}</option>`).join('');
+    else if (nodosOp.length > 1) opciones = nodosOp.map(n => `<option value="n:${esc(n.id)}">${esc(textoAlcance(current, {t:'n', v:n.id}))}</option>`).join('');
+  }
+  const mun = !!opciones;
+  opciones = `<option value="">${fijo ? esc(nombreAlcance()) : 'Todo ' + esc(CATS[current].nombre)}</option>` + opciones;
+  $('#sheet').innerHTML = `<div class="menu"><h3 id="dlgTitle">Compartir</h3><div class="sub">${esc(nombreAlcance())} · ${esc(fechaTxt(rep.fecha))}</div>
+    ${mun ? `<label class="nl" for="mAlc" style="margin-top:10px">Qué incluir</label><select id="mAlc">${opciones}</select>
+    <p class="hint2">Aplica al texto, la imagen, el Excel, el PDF y el link. ${CATS[current].municipios ? 'Elige todo el sistema o un municipio.' : 'Elige todo el sistema o un nodo.'}</p>` : ''}
+    <button class="btn ghost" id="mTxt" type="button">📝 Reporte en texto (WhatsApp, correo)</button>
+    <button class="btn ghost" id="mImg" type="button">🖼️ Reporte en imagen</button>
+    <button class="btn ghost" id="mXls" type="button">📊 Reporte en Excel</button>
+    <button class="btn ghost" id="mPdf" type="button">📄 Reporte en PDF (general + detalle por nodo)</button>
+    <h4>Link de solo lectura</h4>
+    <p class="hint2">Quien abra el link ve el resumen, el mapa y las listas, sin poder cambiar nada.</p>
+    <label class="nl" for="mBase" style="margin-top:6px">Dirección de tu app</label>
+    <input id="mBase" type="url" inputmode="url" placeholder="https://usuario.github.io/cctv-estado/" value="${esc(urlBase())}">
+    <p class="hint2">Usa el link de tu app publicada en GitHub Pages. Se guarda en este teléfono.</p>
+    <div class="sheetbtns"><button class="btn" id="mLink" type="button">Compartir link</button><button class="btn ghost" id="mCopy" type="button">Copiar</button></div>
+    <div class="sheetbtns"><button class="btn ghost" id="cerrar" type="button">Cerrar</button></div></div>`;
+  const d = $('#dlg'); if (!d.open) d.showModal();
+  $('#cerrar').onclick = () => d.close();
+  const elegido = () => { if (fijo) return null; const v = $('#mAlc') ? $('#mAlc').value : ''; return v ? {t: v.slice(0,1), v: v.slice(2)} : null; };
+  $('#mTxt').onclick = () => { const a = elegido(); d.close(); conAlcance(a, (R2, r2) => compartir(R2, r2)); };
+  $('#mImg').onclick = () => { const a = elegido(); conAlcance(a, (R2, r2) => imagenResumen(R2, r2)); };
+  $('#mXls').onclick = () => { const a = elegido(); d.close(); conAlcance(a, (R2, r2) => descargarExcel(R2, r2, true)); };
+  $('#mPdf').onclick = () => { const a = elegido(); d.close(); conAlcance(a, (R2, r2) => reportePDF(R2, r2, true)); };
+  const generar = async () => {
+    const base = $('#mBase').value.trim();
+    if (!/^https?:\/\//i.test(base)){ toast('Escribe la dirección de tu app (empieza por https://)'); $('#mBase').focus(); return null; }
+    store.set('cctv:baseurl', base);
+    if (fijo) return await crearLink(rep, fijo);
+    return await crearLink(rep, elegido());
+  };
+  $('#mLink').onclick = async () => { const url = await generar(); if (!url) return;
+    const sel = $('#mAlc') && $('#mAlc').value; const txt = `Estado de cámaras CCTV ${CATS[current].nombre}${sel ? ' – ' + textoAlcance(current, {t: sel.slice(0,1), v: sel.slice(2)}) : (fijo ? ' – ' + textoAlcance(current, fijo) : '')} – reporte del ${fechaTxt(rep.fecha)}`;
+    try { if (navigator.share){ await navigator.share({title: txt, text: txt, url}); return; } } catch(e){ if (e && e.name === 'AbortError') return; }
+    try { await navigator.clipboard.writeText(url); toast('Link copiado'); } catch(e){ prompt('Copia el link:', url); } };
+  $('#mCopy').onclick = async () => { const url = await generar(); if (!url) return;
+    try { await navigator.clipboard.writeText(url); toast('Link copiado, pégalo en WhatsApp o correo'); } catch(e){ prompt('Copia el link:', url); } };
+}
 async function compartir(R, rep){
   const nt = notas();
   const tot = R.enc + R.apa + R.nd;
-  let t = `ESTADO CCTV ${CATS[current].nombre.toUpperCase()} – ${fechaTxt(rep.fecha)}\n`;
+  let t = `ESTADO CCTV ${nombreAlcance().toUpperCase()} – ${fechaTxt(rep.fecha)}\n`;
   t += `Cámaras: ${tot} | Encendidas ${R.enc} (${pct(R.enc,tot)}) | Apagadas ${R.apa} (${pct(R.apa,tot)})\n`;
   const nm = rep.rows.filter(r => r.Manual).length;
   if (nm) t += `(Incluye ${nm} cambio${nm>1?'s':''} de estado hecho${nm>1?'s':''} a mano)\n`;
@@ -1166,9 +1601,9 @@ async function compartir(R, rep){
   const fue = R.lista.filter(p=>p.estado==='FUE'), con = R.lista.filter(p=>p.estado==='CON');
   if (fue.length){ t += `\nFUERA DE SERVICIO (${fue.length}):\n` + fue.map(p => `- ${p.nombre} (${p.cams.length} cám.)${nt[p.nombre]?' – '+nt[p.nombre]:''}`).join('\n') + '\n'; }
   if (con.length){ t += `\nCON NOVEDAD (${con.length}):\n` + con.map(p => `- ${p.nombre}: ${p.cams.filter(c=>c.estado==='APAGADA').map(c=>c.nombre).join(', ')}${nt[p.nombre]?' – '+nt[p.nombre]:''}`).join('\n') + '\n'; }
-  if (TOPO[current]){ const SWc = estadoSwitches(TOPO[current], rep); const D = diagnosticar(TOPO[current], estadoParadas(R, TOPO[current]), SWc);
-    const swOff = TOPO[current].nodos.filter(n => SWc[n.id] && SWc[n.id].Estado === 'APAGADA');
-    if (SWc.__hay) t += `\nSWITCHES DE NODO: ${TOPO[current].nodos.filter(n => SWc[n.id]).length - swOff.length} responden, ${swOff.length} no responden${swOff.length ? ' (' + swOff.map(n => n.nombre).join(', ') + ')' : ''}\n`;
+  if (getTopo()){ const SWc = estadoSwitches(getTopo(), rep); const D = diagnosticar(getTopo(), estadoParadas(R, getTopo()), SWc);
+    const swOff = getTopo().nodos.filter(n => SWc[n.id] && SWc[n.id].Estado === 'APAGADA');
+    if (SWc.__hay) t += `\nSWITCHES DE NODO: ${getTopo().nodos.filter(n => SWc[n.id]).length - swOff.length} responden, ${swOff.length} no responden${swOff.length ? ' (' + swOff.map(n => n.nombre).join(', ') + ')' : ''}\n`;
     if (D.hall.length) t += `\nTRAMOS A REVISAR (${D.hall.length}):\n` + D.hall.map(x => `- ${x.txt} ${x.revisar}`).join('\n') + '\n'; }
   try { if (navigator.share){ await navigator.share({text:t}); return; } } catch(e){ if (e && e.name === 'AbortError') return; }
   try { await navigator.clipboard.writeText(t); toast('Resumen copiado, pégalo en WhatsApp o correo'); }
@@ -1261,7 +1696,8 @@ $('#file').addEventListener('change', e => {
   esExcel ? rd.readAsArrayBuffer(f) : rd.readAsText(f, 'utf-8');
 });
 
-render();
+(async () => { await abrirLinkCompartido(); render(); })();
+window.addEventListener('hashchange', async () => { if (await abrirLinkCompartido()){ const d = $('#dlg'); if (d.open) d.close(); nodoSel = null; filtro = null; munFiltro = null; render(); window.scrollTo(0,0); } });
 </script>
 </body>
 </html>
