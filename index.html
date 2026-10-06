@@ -82,7 +82,12 @@ button,input,textarea{font:inherit;color:inherit}
 .obt{width:34px;height:34px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font-size:13px;cursor:pointer}.obt:disabled{opacity:.35}
 .menu .opos{width:58px;flex:0 0 58px;height:34px;margin:0;padding:4px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)}
 .rimg{display:flex;align-items:center;gap:10px;margin-top:6px}.rthumb{width:84px;height:60px;object-fit:cover;border-radius:8px;border:1px solid var(--line)}
-.rimgtxt{flex:1;font-size:13px;color:var(--ink-2)}.rimg{flex-wrap:wrap}.rimgadd{border:1px dashed var(--brand-2);background:var(--surface);color:var(--brand);border-radius:10px;padding:8px 10px;font-weight:600;font-size:13.5px;cursor:pointer}
+.rimgtxt{flex:1;font-size:13px;color:var(--ink-2)}.rimg{flex-wrap:wrap}.imgtipo{display:flex;gap:14px;width:100%;font-size:14px}.imgtipo label{display:flex;gap:6px;align-items:center;cursor:pointer}
+.imgacc{display:flex;gap:8px;flex-wrap:wrap;width:100%}
+.pegar{width:100%;min-height:44px;border:1px dashed var(--line);border-radius:10px;padding:10px;font-size:13px;color:var(--ink-2);background:var(--bg);outline:none}
+.pegar:empty::before{content:attr(data-ph)}.pegar:focus{border-color:var(--brand-2);box-shadow:0 0 0 3px rgba(0,168,232,.18)}
+.rimgbts{display:flex;gap:6px}.rthumb{cursor:zoom-in}
+.rimgadd{border:1px dashed var(--brand-2);background:var(--surface);color:var(--brand);border-radius:10px;padding:8px 10px;font-weight:600;font-size:13.5px;cursor:pointer}
 .rindice{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}.rindice a{border:1px solid var(--line);border-radius:999px;padding:5px 10px;font-size:13.5px;font-weight:600;color:var(--brand);text-decoration:none;background:var(--surface)}
 .rol{padding-left:22px;margin:6px 0 10px}.rol li{margin:0 0 10px;line-height:1.35}.rol b{display:block}.rol .rtar{display:block;font-size:14px;color:var(--bad)}.rol .rnov{display:block;font-size:13.5px;font-style:italic;color:var(--ink)}.rol .rdir{display:block;font-size:13px;color:var(--ink-2)}.rol a{font-size:14px;font-weight:600}
 .maplink{display:flex;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin:10px 0 4px;text-decoration:none;color:var(--ink)}
@@ -886,6 +891,7 @@ function enlacesRecorrido(r){
   return out;
 }
 function abrirRuta(R, rep){
+  if (SHARED){ toast('Las rutas de mantenimiento solo se generan desde la app con acceso total'); return; }
   const sel = rutaSel(); const est = {SIN:'var(--ok)', CON:'var(--warn)', FUE:'var(--bad)', ND:'var(--nodata)'};
   const opts = store.get('cctv:rutaopc') || {tipo:'Correctivo', n:1, inv:false, quien:''};
   const lista = R.lista.filter(p => p.cams.length);
@@ -1019,19 +1025,51 @@ function reducirImagen(file, max = 1600){
     im.onerror = () => { URL.revokeObjectURL(url); mal(new Error('No se pudo leer la imagen')); }; im.src = url; });
 }
 const TIPO_IMG = {novedad: 'Imagen de la novedad', operativo: 'Punto operativo (después de la corrección)'};
+async function guardarImgPunto(cont, p, fileOrBlob, tipo){
+  try { const b = await reducirImagen(fileOrBlob); await IMGDB.set(claveImg(p), {blob: b, fecha: ahora(), tipo}); pintarImgPunto(cont, p); toast('Imagen adjuntada'); }
+  catch(e){ toast('No se pudo guardar la imagen'); }
+}
+function descargarImgPunto(p, v){
+  const nombre = `${p.replace(/[\\/:*?"<>|]/g,'-')} - ${v.tipo === 'operativo' ? 'punto operativo' : 'novedad'} - ${(v.fecha || '').replace(/[\/:]/g,'-')}.jpg`;
+  (async () => {
+    if (dlPromise){ let dl = null; try { dl = await dlPromise; } catch(e){} if (dl){ try { await dl.save({filename: nombre, data: v.blob}); toast('Imagen descargada'); } catch(e){} return; } }
+    const u = URL.createObjectURL(v.blob), a = document.createElement('a'); a.href = u; a.download = nombre; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 4000); toast('Imagen descargada');
+  })();
+}
 async function pintarImgPunto(cont, p){
+  if (SHARED){ cont.innerHTML = ''; return; }
   const v = await leerImg(p);
   if (v && v.blob){ const url = URL.createObjectURL(v.blob);
-    cont.innerHTML = `<img class="rthumb" src="${url}" alt="${esc(TIPO_IMG[v.tipo] || 'Imagen')} de ${esc(p)}"><span class="rimgtxt">${v.tipo === 'operativo' ? '✅' : '📷'} ${esc(TIPO_IMG[v.tipo] || 'Imagen del VMS')} · ${esc(v.fecha || '')}</span><button type="button" class="obt rimgdel" aria-label="Quitar imagen">✕</button>`;
+    cont.innerHTML = `<img class="rthumb" src="${url}" alt="${esc(TIPO_IMG[v.tipo] || 'Imagen')} de ${esc(p)}" title="Ver en grande"><span class="rimgtxt">${v.tipo === 'operativo' ? '✅' : '📷'} ${esc(TIPO_IMG[v.tipo] || 'Imagen del VMS')} · ${esc(v.fecha || '')}</span>
+      <span class="rimgbts"><button type="button" class="obt rimgdl" aria-label="Descargar imagen" title="Descargar">⬇</button><button type="button" class="obt rimgdel" aria-label="Quitar imagen" title="Quitar">✕</button></span>`;
     cont.querySelector('.rimgdel').onclick = async () => { await IMGDB.del(claveImg(p)); pintarImgPunto(cont, p); toast('Imagen quitada'); };
-  } else {
-    cont.innerHTML = `<button type="button" class="rimgadd" data-t="novedad">📷 Imagen de la novedad</button><button type="button" class="rimgadd" data-t="operativo">✅ Imagen del punto operativo</button>`;
-    cont.querySelectorAll('.rimgadd').forEach(bt => bt.onclick = () => { const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'image/*';
-      inp.onchange = async () => { const f = inp.files && inp.files[0]; if (!f) return;
-        try { const b = await reducirImagen(f); await IMGDB.set(claveImg(p), {blob: b, fecha: ahora(), tipo: bt.dataset.t}); pintarImgPunto(cont, p); toast('Imagen adjuntada'); }
-        catch(e){ toast('No se pudo guardar la imagen'); } };
-      inp.click(); });
+    cont.querySelector('.rimgdl').onclick = () => descargarImgPunto(p, v);
+    cont.querySelector('.rthumb').onclick = () => { const w = window.open(url, '_blank'); if (!w) descargarImgPunto(p, v); };
+    return;
   }
+  const id = 'pz' + Math.random().toString(36).slice(2, 8);
+  cont.innerHTML = `<div class="imgtipo" role="radiogroup" aria-label="Tipo de imagen"><label><input type="radio" name="${id}" value="novedad" checked> 📷 Novedad</label><label><input type="radio" name="${id}" value="operativo"> ✅ Punto operativo</label></div>
+    <div class="imgacc"><button type="button" class="rimgadd" data-a="file">📁 Subir o tomar foto</button><button type="button" class="rimgadd" data-a="paste">📋 Pegar pantallazo</button></div>
+    <div class="pegar" contenteditable="true" role="textbox" aria-label="Zona para pegar la imagen" data-ph="…o mantén presionado aquí y elige Pegar (en computador: clic aquí y Ctrl+V)"></div>`;
+  const tipo = () => (cont.querySelector(`input[name="${id}"]:checked`) || {}).value || 'novedad';
+  cont.querySelector('[data-a="file"]').onclick = () => { const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'image/*';
+    inp.onchange = () => { const f = inp.files && inp.files[0]; if (f) guardarImgPunto(cont, p, f, tipo()); }; inp.click(); };
+  cont.querySelector('[data-a="paste"]').onclick = async () => {
+    try {
+      if (!navigator.clipboard || !navigator.clipboard.read) throw new Error('sin api');
+      const items = await navigator.clipboard.read();
+      for (const it of items){ const t = it.types.find(x => x.startsWith('image/')); if (t){ guardarImgPunto(cont, p, await it.getType(t), tipo()); return; } }
+      toast('No hay ninguna imagen copiada. Toma el pantallazo, cópialo y vuelve a intentar.');
+    } catch(e){ const z = cont.querySelector('.pegar'); z.focus(); toast('Mantén presionado el recuadro y elige Pegar (o Ctrl+V)'); }
+  };
+  const zona = cont.querySelector('.pegar');
+  zona.addEventListener('paste', ev => {
+    const its = (ev.clipboardData && ev.clipboardData.items) || [];
+    for (const it of its){ if (it.type && it.type.startsWith('image/')){ ev.preventDefault(); const f = it.getAsFile(); if (f) guardarImgPunto(cont, p, f, tipo()); return; } }
+    ev.preventDefault(); toast('Lo copiado no es una imagen');
+  });
+  zona.addEventListener('input', () => { const im = zona.querySelector('img'); if (im && im.src.startsWith('data:')) fetch(im.src).then(r => r.blob()).then(b => guardarImgPunto(cont, p, b, tipo())); zona.innerHTML = ''; });
+  zona.addEventListener('drop', ev => { const f = ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0]; if (f && f.type.startsWith('image/')){ ev.preventDefault(); guardarImgPunto(cont, p, f, tipo()); } });
 }
 /* Puntos (del alcance actual) que tienen imagen */
 async function imagenesAlcance(R){
@@ -1041,9 +1079,9 @@ async function imagenesAlcance(R){
 }
 function entradaPunto(p){ const u = ubicacion(p.nombre); return {x: {p, c: u && u.c ? u.c : null, link: u ? u.l : '', dir: u ? [u.d, u.s].filter(Boolean).join(' · ') : ''}, ta: p.estado === 'SIN' ? 'Punto operativo: todas sus cámaras encendidas' : tareaPunto(p, 'Correctivo'), nv: novedadesPunto(p)}; }
 /* Comparte texto + fichas de los puntos que tienen imagen */
-async function compartirConImagenes(txt, tit, entradas){
+async function compartirConImagenes(txt, tit, entradas, soloTipo){
   const fichas = [];
-  for (const q of entradas){ const v = await leerImg(q.x.p.nombre); if (v && v.blob){ try { const b = await fichaPunto(q.x, q.ta, q.nv, v.blob, v); fichas.push(new File([b], `${q.x.p.nombre.replace(/[\\/:*?"<>|]/g,'-')}.jpg`, {type:'image/jpeg'})); } catch(e){} } }
+  for (const q of entradas){ const v = await leerImg(q.x.p.nombre); if (v && v.blob && (!soloTipo || (v.tipo || 'novedad') === soloTipo)){ try { const b = await fichaPunto(q.x, q.ta, q.nv, v.blob, v); fichas.push(new File([b], `${q.x.p.nombre.replace(/[\\/:*?"<>|]/g,'-')}.jpg`, {type:'image/jpeg'})); } catch(e){} } }
   if (!fichas.length){
     try { if (navigator.share){ await navigator.share({title: tit, text: txt}); return; } } catch(e){ if (e && e.name === 'AbortError') return; }
     try { await navigator.clipboard.writeText(txt); toast('Copiado, pégalo en WhatsApp o correo'); } catch(e){ prompt('Copia el texto:', txt); } return; }
@@ -1111,7 +1149,8 @@ function ordenarManual(R, rep, elegidos, o){
   $('#oGen').onclick = () => { store.set(clave, orden); mostrarRuta(R, rep, orden.map(n => elegidos.find(p => p.nombre === n)), Object.assign({}, o, {manual: true})); };
   pintar();
 }
-function mostrarRuta(R, rep, elegidos, o){
+async function mostrarRuta(R, rep, elegidos, o){
+  const fotos = new Set(); if (o.tipo !== 'Preventivo') for (const p of elegidos){ const v = await leerImg(p.nombre); if (v && v.blob && (v.tipo || 'novedad') === 'novedad') fotos.add(p.nombre); }
   if (o.tipo === 'Preventivo') return mostrarPreventivo(R, rep, elegidos, o);
   const items = elegidos.map(p => { const u = ubicacion(p.nombre); return {p, c: u && u.c ? u.c : null, link: u ? u.l : '', dir: u ? [u.d, u.s].filter(Boolean).join(' · ') : ''}; });
   let A;
@@ -1126,7 +1165,8 @@ function mostrarRuta(R, rep, elegidos, o){
   const km = r => { const q = r.filter(x => x.c); return q.reduce((a, x, i) => i ? a + kmEntre(q[i-1].c, x.c) : 0, 0); }, fmt = v => v.toFixed(1).replace('.', ',');
   const fecha = ahora().split(' ')[0], textos = [], puntosC = grupos.map(() => []);
   let html = `<div class="menu"><h3 id="dlgTitle">🧰 Rutas de mantenimiento correctivo</h3><div class="sub">${esc(nombreAlcance())} · ${elegidos.length} puntos en <b>${NR} ruta${NR>1?'s':''}</b>${o.manual ? ' en el orden que definiste' : ' por sector'}${grupos.length > 1 ? ` · repartidas en <b>${grupos.length} cuadrillas</b>` : ''}</div>
-    <p class="hint2">📷 Opcional: en cada punto puedes adjuntar una imagen del VMS. Al compartir, cada punto con imagen se envía como una ficha con su nombre, novedad, ubicación y la imagen.</p>
+    ${fotos.size ? `<p class="hint2 rfotos">📷 <b>${fotos.size} punto${fotos.size>1?'s tienen':' tiene'} foto de la novedad</b>: se adjunta${fotos.size>1?'n':''} automáticamente al compartir, como ficha con el nombre, la novedad, la ubicación y la imagen.</p>` : ''}
+    <p class="hint2">📷 Opcional: en cada punto puedes adjuntar o pegar la imagen de la novedad; se enviará automáticamente con la ruta.</p>
     <p class="hint2">${o.manual ? `Rutas en el <b>orden que definiste</b> (máximo ${MAX_REC} puntos cada una).` : `Las rutas se arman por sectores de puntos cercanos (máximo ${MAX_REC} puntos cada una, en el orden del recorrido más corto).`}${grupos.length > 1 ? (o.manual ? ' Se reparten en ese mismo orden entre las cuadrillas, con una cantidad de puntos lo más pareja posible.' : ' Luego se reparten entre las cuadrillas: cada cuadrilla recibe rutas vecinas entre sí y una cantidad de puntos lo más pareja posible.') : ''}</p>
     ${grupos.length > 1 ? `<div class="rindice">${grupos.map((g,i) => `<a href="#cuad${i+1}">${esc(nombres[i] || 'Cuadrilla ' + (i+1))} · ${g.reduce((a,x) => a + x.r.length, 0)} pts · ${g.length} ruta${g.length>1?'s':''}</a>`).join('')}</div>` : ''}`;
   grupos.forEach((g, i) => {
@@ -1138,7 +1178,7 @@ function mostrarRuta(R, rep, elegidos, o){
       t += `\n${tit.toUpperCase()} (${r.length} punto${r.length>1?'s':''}, ~${fmt(km(r))} km en línea recta)\n`;
       html += `<h5>${esc(tit)} <span class="sub">${r.length} puntos · ~${fmt(km(r))} km</span></h5><ol class="rol">`;
       r.forEach((x, k) => { const ta = tareaPunto(x.p, 'Correctivo'), nv = novedadesPunto(x.p);
-        t += `${k+1}. ${x.p.nombre} – ${ta}${x.dir ? '\n   Dirección: ' + x.dir : ''}${nv.causa ? '\n   Novedad: ' + nv.causa : ''}${x.link ? '\n   ' + x.link : ''}\n`;
+        t += `${k+1}. ${x.p.nombre} – ${ta}${x.dir ? '\n   Dirección: ' + x.dir : ''}${nv.causa ? '\n   Novedad: ' + nv.causa : ''}${fotos.has(x.p.nombre) ? '\n   📷 Foto de la novedad adjunta' : ''}${x.link ? '\n   ' + x.link : ''}\n`;
         puntosC[i].push({x, ta, nv});
         html += `<li><b>${esc(x.p.nombre)}</b><span class="rtar" style="${/^Revisión/.test(ta) ? 'color:var(--ink-2)' : x.p.estado === 'CON' ? 'color:var(--warn)' : ''}">${esc(ta)}</span>${nv.causa ? `<span class="rnov">Novedad: ${esc(nv.causa)}</span>` : ''}${x.dir ? `<span class="rdir">${esc(x.dir)}</span>` : ''}${x.link ? `<a href="${esc(x.link)}" target="_blank" rel="noopener">📍 Ubicación</a>` : ''}<div class="rimg" data-img="${esc(x.p.nombre)}"></div></li>`; });
       html += `</ol>`;
@@ -1160,8 +1200,11 @@ function mostrarRuta(R, rep, elegidos, o){
   document.querySelectorAll('[data-cp]').forEach(b => b.onclick = () => copiar(textos[+b.dataset.cp]));
   document.querySelectorAll('#sheet .rimg').forEach(c => pintarImgPunto(c, c.dataset.img));
   const compartirConFichas = compartirConImagenes;
-  document.querySelectorAll('[data-sh]').forEach(b => b.onclick = () => compartirConFichas(textos[+b.dataset.sh], 'Mantenimiento correctivo ' + (nombres[+b.dataset.sh] || 'cuadrilla ' + (+b.dataset.sh + 1)), puntosC[+b.dataset.sh]));
-  const sa = $('#rShare'); if (sa) sa.onclick = () => compartirConFichas(todo, 'Mantenimiento correctivo ' + nombreAlcance(), puntosC.flat());
+  document.querySelectorAll('[data-sh]').forEach(b => b.onclick = () => compartirConFichas(textos[+b.dataset.sh], 'Mantenimiento correctivo ' + (nombres[+b.dataset.sh] || 'cuadrilla ' + (+b.dataset.sh + 1)), puntosC[+b.dataset.sh], 'novedad'));
+  const sa = $('#rShare'); if (sa) sa.onclick = () => compartirConFichas(todo, 'Mantenimiento correctivo ' + nombreAlcance(), puntosC.flat(), 'novedad');
+  // si se agrega o quita una foto en la ruta, se vuelve a armar para actualizar el texto y el aviso
+  document.querySelectorAll('#sheet .rimg').forEach(c => new MutationObserver(async () => { const v = await leerImg(c.dataset.img), tiene = !!(v && v.blob && (v.tipo || 'novedad') === 'novedad');
+    if (tiene !== fotos.has(c.dataset.img)){ const y = $('#sheet').scrollTop; await mostrarRuta(R, rep, elegidos, o); $('#sheet').scrollTop = y; } }).observe(c, {childList: true}));
 }
 /* ---------- Mapa geográfico (Leaflet) y KML ---------- */
 async function obtenerLeaflet(){
@@ -1765,7 +1808,7 @@ function render(){
     <button class="st warn" type="button" data-f="CON" aria-pressed="${filtro==='CON'}"><div class="n">${R.cuenta.CON}</div><div class="l">Puntos con novedad</div></button>
     <button class="st bad" type="button" data-f="FUE" aria-pressed="${filtro==='FUE'}"><div class="n">${R.cuenta.FUE}</div><div class="l">Fuera de servicio</div></button></div>`;
 
-  h += `<button class="rutabtn" type="button" id="rutaBtn">🧰 Rutas de mantenimiento${Object.keys(rutaSel()).length ? ` · <b>${Object.keys(rutaSel()).length}</b> puntos elegidos` : ''}</button>`;
+  if (!SHARED) h += `<button class="rutabtn" type="button" id="rutaBtn">🧰 Rutas de mantenimiento${Object.keys(rutaSel()).length ? ` · <b>${Object.keys(rutaSel()).length}</b> puntos elegidos` : ''}</button>`;
   h += htmlRed(R, rep);
   // muro de puntos
   h += `<section><h2>Puntos <span class="meta">${R.lista.length} puntos · toca uno para ver sus cámaras</span></h2>
@@ -1885,14 +1928,14 @@ function abrir(p){
   const txtCon = textoConexiones(TOPO[current], p.nombre);
   const lineaCon = txtCon ? `<div class="conex"><b>🔗 Conexiones</b><span>${esc(txtCon)}</span></div>` : '';
   const lineaMapa = ub ? `<a class="maplink" href="${esc(ub.l)}" target="_blank" rel="noopener"><span class="pin">📍</span><div><b>Ver ubicación en Google Maps</b><span>${esc([ub.d, ub.s].filter(Boolean).join(' · ') || 'Abrir en el mapa')}</span></div></a>` : '';
-  $('#sheet').innerHTML = `<h3 id="dlgTitle">${esc(p.nombre)}</h3><div class="sub">${p.mun?esc(p.mun)+' · ':''}${ST[p.estado]} · ${p.enc} encendidas, ${p.apa} apagadas</div>${lineaSw}${lineaMapa}${lineaCon}<button class="maplnk" type="button" id="rutaPt">${enRuta(p.nombre) ? '✓ En las rutas de mantenimiento (quitar)' : '🧰 Agregar a las rutas de mantenimiento'}</button><p class="hint">Si se solucionó una novedad, toca el estado de la cámara para cambiarlo.</p>${cams}
+  $('#sheet').innerHTML = `<h3 id="dlgTitle">${esc(p.nombre)}</h3><div class="sub">${p.mun?esc(p.mun)+' · ':''}${ST[p.estado]} · ${p.enc} encendidas, ${p.apa} apagadas</div>${lineaSw}${lineaMapa}${lineaCon}${SHARED ? '' : `<button class="maplnk" type="button" id="rutaPt">${enRuta(p.nombre) ? '✓ En las rutas de mantenimiento (quitar)' : '🧰 Agregar a las rutas de mantenimiento'}</button>`}<p class="hint">Si se solucionó una novedad, toca el estado de la cámara para cambiarlo.</p>${cams}
     <label class="nl" for="nota">Causa novedad</label><textarea id="nota" placeholder="Ej.: corte de energía, fibra cortada, cámara en mantenimiento">${esc(nt[p.nombre]||'')}</textarea>
     ${SHARED ? '' : `<div class="nl" style="margin-top:10px">Imagen (opcional)</div><p class="hint2" style="margin:0 0 4px">Adjunta la imagen de la novedad o, cuando se corrija, la del punto operativo. Se comparte en los reportes.</p><div class="rimg" id="imgPunto" data-img="${esc(p.nombre)}"></div>`}
     <div class="sheetbtns"><button class="btn" id="guardar" type="button">Guardar causa</button><button class="btn ghost" id="cerrar" type="button">Cerrar</button></div>`;
   const d = $('#dlg'); if (!d.open) d.showModal();
   $('#cerrar').onclick = () => d.close();
   if ($('#imgPunto')) pintarImgPunto($('#imgPunto'), p.nombre);
-  $('#rutaPt').onclick = () => { const on = alternarRuta(p.nombre); $('#rutaPt').textContent = on ? '✓ En las rutas de mantenimiento (quitar)' : '🧰 Agregar a las rutas de mantenimiento'; toast(on ? 'Agregado a las rutas de mantenimiento' : 'Quitado de las rutas'); const rb = document.getElementById('rutaBtn'); if (rb){ const n = Object.keys(rutaSel()).length; rb.innerHTML = '🧰 Rutas de mantenimiento' + (n ? ` · <b>${n}</b> puntos elegidos` : ''); } };
+  if ($('#rutaPt')) $('#rutaPt').onclick = () => { const on = alternarRuta(p.nombre); $('#rutaPt').textContent = on ? '✓ En las rutas de mantenimiento (quitar)' : '🧰 Agregar a las rutas de mantenimiento'; toast(on ? 'Agregado a las rutas de mantenimiento' : 'Quitado de las rutas'); const rb = document.getElementById('rutaBtn'); if (rb){ const n = Object.keys(rutaSel()).length; rb.innerHTML = '🧰 Rutas de mantenimiento' + (n ? ` · <b>${n}</b> puntos elegidos` : ''); } };
   if (SHARED){
     const h = $('#sheet .hint'); if (h) h.remove();
     const ta = $('#nota'); ta.readOnly = true; if (!ta.value) ta.placeholder = 'Sin causa registrada';
